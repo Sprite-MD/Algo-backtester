@@ -1,0 +1,403 @@
+================================================================================
+ALGORITHMIC TRADING BACKTESTER — PROJECT OUTLINE
+================================================================================
+
+Test buy/sell strategies (Moving Averages, RSI, MACD) against historical price
+data. Simulates realistic trade execution with commission and slippage, then
+measures performance via risk-adjusted metrics and renders results in an
+interactive Streamlit dashboard.
+
+--------------------------------------------------------------------------------
+LOGICAL FLOW
+--------------------------------------------------------------------------------
+
+config.py
+   |
+   v
+data/fetcher.py         -->  clean OHLCV DataFrame
+   |
+   v
+strategy/*.py           -->  signal Series (1 = buy, -1 = sell, 0 = hold)
+   |
+   v
+engine/backtester.py    -->  bar-by-bar simulation loop
+   |-- engine/order.py        -->  Order objects
+   +-- engine/portfolio.py    -->  equity curve + trade log
+   |
+   v
+risk/metrics.py         -->  performance statistics dict
+   |
+   v
+visualization/dashboard.py   -->  interactive Streamlit app
+
+
+================================================================================
+FILE-BY-FILE BREAKDOWN
+================================================================================
+
+--------------------------------------------------------------------------------
+config.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Single source of truth for every configurable parameter in the project.
+  No magic numbers should exist anywhere else — all modules import from here.
+
+SHOULD CONTAIN:
+  - BacktestConfig (Pydantic BaseModel) with the following fields:
+
+    Universe & Date Range:
+      ticker          : str   — stock symbol to test (e.g. "AAPL")
+      start_date      : date  — beginning of the simulation window
+      end_date        : date  — end of the simulation window
+
+    Capital & Cost Model:
+      initial_capital : float — starting cash (e.g. 100_000.0)
+      commission      : float — fraction taken per trade (e.g. 0.001 = 0.1%)
+      slippage        : float — price penalty on fills (e.g. 0.0005 = 0.05%)
+      position_size   : float — fraction of capital to deploy per signal (0-1)
+
+    Strategy Selection:
+      strategy        : Literal["moving_average", "rsi", "macd"]
+
+    Nested strategy parameter sub-models:
+      MovingAverageParams
+        fast_window   : int              — short MA lookback period
+        slow_window   : int              — long MA lookback period
+        ma_type       : Literal["sma","ema"]
+
+      RSIParams
+        period        : int   — RSI lookback (default 14)
+        oversold      : float — buy threshold (default 30)
+        overbought    : float — sell threshold (default 70)
+
+      MACDParams
+        fast_period   : int   — fast EMA period (default 12)
+        slow_period   : int   — slow EMA period (default 26)
+        signal_period : int   — signal line EMA period (default 9)
+
+    Infrastructure:
+      data_cache_dir  : str   — local path for cached price data files
+
+  - Validation rules (enforced by Pydantic):
+      end_date > start_date
+      initial_capital > 0
+      commission >= 0 and slippage >= 0
+      0 < position_size <= 1.0
+      fast_window < slow_window (MA)
+      oversold < overbought (RSI)
+
+  - A default instance at module level:
+      CONFIG = BacktestConfig()
+    ...so any module can do: from config import CONFIG
+
+
+--------------------------------------------------------------------------------
+data/fetcher.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Deliver a clean, cache-backed OHLCV DataFrame. The rest of the system never
+  calls yfinance directly — all data flows through this file.
+
+SHOULD CONTAIN:
+  - fetch_data(config: BacktestConfig) -> pd.DataFrame
+      1. Build a cache file path from ticker + date range
+      2. If the cache file exists, load and return it (CSV or Parquet)
+      3. Otherwise, call yfinance.download() for the ticker and date range
+      4. Clean the result:
+           - Drop rows with any NaN values
+           - Ensure the index is a DatetimeIndex
+           - Use adjusted Close prices (accounts for splits/dividends)
+           - Rename columns to lowercase: open, high, low, close, volume
+      5. Save to cache, then return the DataFrame
+
+  - The cache prevents redundant network calls on reruns.
+  - Parquet is preferred over CSV (faster, typed), but CSV is acceptable.
+
+
+--------------------------------------------------------------------------------
+strategy/base.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Define the contract every strategy must satisfy. The backtester engine
+  never needs to know which strategy it's running — it just calls the interface.
+
+SHOULD CONTAIN:
+  - BaseStrategy (abc.ABC)
+      generate_signals(df: pd.DataFrame) -> pd.Series
+        Abstract method. Takes a full OHLCV DataFrame, returns a Series of
+        signal values aligned to the same DatetimeIndex:
+          1  = buy
+         -1  = sell
+          0  = hold / no action
+
+
+--------------------------------------------------------------------------------
+strategy/moving_average.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Implement the SMA/EMA crossover strategy.
+
+SHOULD CONTAIN:
+  - MovingAverageStrategy(BaseStrategy)
+      __init__(config): reads fast_window, slow_window, ma_type from config
+
+      generate_signals(df):
+        1. Compute fast MA and slow MA over df["close"]
+           (use .rolling().mean() for SMA, .ewm().mean() for EMA)
+        2. Buy signal (1)  when fast MA crosses ABOVE slow MA (golden cross)
+        3. Sell signal (-1) when fast MA crosses BELOW slow MA (death cross)
+        4. Hold (0) otherwise
+        5. Return signals as a pd.Series aligned to df.index
+
+  NOTE: Crossover detection requires comparing current bar to previous bar
+  (use .shift(1)) — never peek at future bars.
+
+
+--------------------------------------------------------------------------------
+strategy/rsi.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Implement the RSI mean-reversion strategy.
+
+SHOULD CONTAIN:
+  - RSIStrategy(BaseStrategy)
+      __init__(config): reads period, oversold, overbought from config
+
+      generate_signals(df):
+        1. Compute RSI over df["close"]:
+             - Calculate daily price changes (diff)
+             - Separate gains and losses
+             - Apply Wilder smoothing (ewm with alpha=1/period, adjust=False)
+             - RSI = 100 - (100 / (1 + avg_gain / avg_loss))
+        2. Buy signal (1)  when RSI crosses BELOW oversold threshold (e.g. 30)
+        3. Sell signal (-1) when RSI crosses ABOVE overbought threshold (e.g. 70)
+        4. Hold (0) otherwise
+        5. Return signals as a pd.Series aligned to df.index
+
+
+--------------------------------------------------------------------------------
+strategy/macd.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Implement the MACD crossover strategy.
+
+SHOULD CONTAIN:
+  - MACDStrategy(BaseStrategy)
+      __init__(config): reads fast_period, slow_period, signal_period from config
+
+      generate_signals(df):
+        1. Compute fast EMA and slow EMA over df["close"]
+        2. MACD line     = fast EMA - slow EMA
+        3. Signal line   = EMA of MACD line (signal_period)
+        4. Histogram     = MACD line - signal line (optional, for reference)
+        5. Buy signal (1)  when MACD line crosses ABOVE signal line
+        6. Sell signal (-1) when MACD line crosses BELOW signal line
+        7. Hold (0) otherwise
+        8. Return signals as a pd.Series aligned to df.index
+
+
+--------------------------------------------------------------------------------
+engine/order.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Define the atomic unit of the simulation. Every trade decision is captured
+  as an Order before being passed to the portfolio for execution.
+
+SHOULD CONTAIN:
+  - Order (dataclass, no logic — pure data)
+      ticker     : str
+      direction  : Literal["buy", "sell"]
+      order_type : Literal["market", "limit", "stop"]  — start with market only
+      quantity   : float     — number of shares
+      price      : float     — requested/signal price
+      timestamp  : datetime  — the bar at which the signal fired
+
+  - Keeping this a plain dataclass makes orders easy to log, inspect, and
+    serialize for debugging.
+
+
+--------------------------------------------------------------------------------
+engine/portfolio.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  The financial state machine of the simulation. All cash and position
+  changes happen here and nowhere else.
+
+SHOULD CONTAIN:
+  - Portfolio
+      __init__(config):
+        - self.cash = initial_capital
+        - self.positions = {}         # ticker -> quantity
+        - self.trade_log = []         # list of executed trade dicts
+        - self.equity_curve = []      # list of (timestamp, total_equity)
+
+      execute_order(order, current_price):
+        1. Apply slippage to get fill price:
+             buy:  fill_price = current_price * (1 + slippage)
+             sell: fill_price = current_price * (1 - slippage)
+        2. Compute cost/proceeds including commission:
+             cost = quantity * fill_price * (1 + commission)  [for buys]
+             proceeds = quantity * fill_price * (1 - commission)  [for sells]
+        3. Update self.cash and self.positions
+        4. Append a record to self.trade_log
+
+      update_equity(timestamp, current_prices):
+        Compute total equity = cash + sum(position * price for each holding)
+        Append (timestamp, equity) to self.equity_curve
+
+      get_equity_series() -> pd.Series:
+        Return equity_curve as a DatetimeIndex-aligned Series
+
+      get_trade_df() -> pd.DataFrame:
+        Return trade_log as a DataFrame
+
+
+--------------------------------------------------------------------------------
+engine/backtester.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  The simulation loop. Iterates through history one bar at a time and
+  enforces temporal discipline — no bar ever sees data from the future.
+
+SHOULD CONTAIN:
+  - Backtester
+      __init__(config, data, strategy, portfolio)
+
+      run() -> (pd.Series, pd.DataFrame):
+        Iterates over each bar in data:
+          1. Slice data up to and including current bar (data.iloc[:i+1])
+          2. Call strategy.generate_signals(slice) to get signal for this bar
+          3. Read the signal value at the current timestamp
+          4. If signal == 1 (buy) and no open position:
+               - Compute quantity from position_size and available cash
+               - Create an Order(direction="buy", ...)
+               - Call portfolio.execute_order(order, close_price)
+          5. If signal == -1 (sell) and position exists:
+               - Create an Order(direction="sell", quantity=held_shares, ...)
+               - Call portfolio.execute_order(order, close_price)
+          6. Call portfolio.update_equity(timestamp, close_price)
+
+        Return (equity_curve, trade_log) at the end
+
+  CRITICAL: The slice passed to the strategy on bar i must contain ONLY bars
+  0..i. Never pass the full dataset — that introduces lookahead bias.
+
+
+--------------------------------------------------------------------------------
+risk/metrics.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Pure calculation module. Takes the equity curve and trade log, returns a
+  dict of performance statistics. No side effects, no I/O.
+
+SHOULD CONTAIN (each as a standalone function):
+  - total_return(equity: pd.Series) -> float
+      (final - initial) / initial
+
+  - annualized_return(equity: pd.Series) -> float
+      (1 + total_return) ^ (252 / num_trading_days) - 1
+
+  - sharpe_ratio(equity: pd.Series, risk_free_rate=0.0) -> float
+      daily_returns = equity.pct_change().dropna()
+      (mean_daily_return - rf_daily) / std * sqrt(252)
+
+  - sortino_ratio(equity: pd.Series, risk_free_rate=0.0) -> float
+      Like Sharpe but std uses only negative returns (downside deviation)
+
+  - max_drawdown(equity: pd.Series) -> float
+      rolling_max = equity.cummax()
+      drawdown = (equity - rolling_max) / rolling_max
+      return drawdown.min()
+
+  - win_rate(trade_df: pd.DataFrame) -> float
+      Fraction of closed trades where PnL > 0
+
+  - profit_factor(trade_df: pd.DataFrame) -> float
+      gross_profit / gross_loss  (> 1.0 means strategy made money overall)
+
+  - avg_trade_duration(trade_df: pd.DataFrame) -> float
+      Mean number of bars/days between entry and exit
+
+  - compute_all(equity, trade_df) -> dict
+      Calls all of the above and returns results in a single dict
+
+
+--------------------------------------------------------------------------------
+visualization/dashboard.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Render the full results interface as an interactive Streamlit app using
+  Plotly charts. Consumes outputs from the portfolio and metrics modules.
+
+SHOULD CONTAIN:
+  - run_dashboard(config, data, equity, trade_df, metrics) — main entry point
+
+  - Four visual components:
+      1. Equity Curve Chart
+           - Portfolio equity over time (line)
+           - Buy-and-hold benchmark overlaid (normalized to same starting capital)
+           - Built with plotly go.Scatter
+
+      2. Drawdown Chart
+           - Underwater equity curve: (equity - rolling_max) / rolling_max
+           - Shaded area below zero to visualize loss periods
+
+      3. Candlestick + Signal Markers
+           - OHLC candlestick via plotly go.Candlestick
+           - Buy signals as green triangle-up markers
+           - Sell signals as red triangle-down markers
+
+      4. Metrics Table
+           - Summary of all risk/metrics.py outputs
+           - Rendered via st.dataframe or st.table
+
+  - Streamlit sidebar: allow user to view config parameters (read-only display)
+
+
+--------------------------------------------------------------------------------
+main.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Thin orchestrator. No business logic lives here — it only wires modules
+  together in the correct order and optionally provides a CLI interface.
+
+SHOULD CONTAIN:
+  - main() function that runs the full pipeline:
+      1. Load CONFIG from config.py
+      2. Call fetch_data(CONFIG)           -> df
+      3. Instantiate the correct strategy  -> strategy
+      4. Instantiate Portfolio(CONFIG)     -> portfolio
+      5. Instantiate Backtester(...)       -> backtester
+      6. Run backtester.run()              -> equity, trade_df
+      7. Call compute_all(equity, trade_df)-> metrics
+      8. Call run_dashboard(...)
+
+  - Optional CLI via argparse or click:
+      --ticker      override config ticker
+      --strategy    override config strategy
+      --start       override start_date
+      --end         override end_date
+    These should patch CONFIG before the pipeline runs.
+
+  - if __name__ == "__main__": main()
+
+
+================================================================================
+BUILD ORDER (recommended)
+================================================================================
+
+  1. config.py                  — foundation; everything imports from here
+  2. data/fetcher.py            — verify real data flows before building logic
+  3. strategy/base.py           — define the interface
+  4. strategy/moving_average.py — simplest strategy; validate signal output
+  5. engine/order.py            — trivial dataclass
+  6. engine/portfolio.py        — stateful; test fill logic carefully
+  7. engine/backtester.py       — first full end-to-end run
+  8. strategy/rsi.py            — add second strategy once engine works
+  9. strategy/macd.py           — add third strategy
+ 10. risk/metrics.py            — validate numbers by hand on small examples
+ 11. visualization/dashboard.py — last; pure output layer
+ 12. main.py                    — wire everything together, add CLI
+
+
+================================================================================

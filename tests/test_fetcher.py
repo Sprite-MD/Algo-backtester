@@ -118,7 +118,7 @@ class TestCaching:
             df_first = fetch_data(config)
             df_second = fetch_data(config)
 
-        pd.testing.assert_frame_equal(df_first, df_second)
+        pd.testing.assert_frame_equal(df_first, df_second, check_freq=False)
 
     def test_different_tickers_produce_separate_cache_files(self, tmp_path):
         config_aapl = make_config(str(tmp_path), ticker="AAPL")

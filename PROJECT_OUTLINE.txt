@@ -383,7 +383,7 @@ SHOULD CONTAIN:
 
 
 ================================================================================
-BUILD ORDER (recommended)
+BUILD ORDER
 ================================================================================
 
   1. config.py                  — foundation; everything imports from here

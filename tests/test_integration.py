@@ -111,7 +111,7 @@ class TestPipelineMovingAverage:
         expected = {
             "total_return", "annualized_return", "sharpe_ratio",
             "sortino_ratio", "max_drawdown", "win_rate",
-            "profit_factor", "avg_trade_duration",
+            "profit_factor", "avg_trade_duration", "calmar_ratio",
         }
         assert expected == set(metrics.keys())
 
@@ -166,7 +166,7 @@ class TestPipelineRSI:
 
     def test_metrics_has_all_keys(self, result):
         _, _, metrics = result
-        assert len(metrics) == 8
+        assert len(metrics) == 9
 
     def test_equity_never_negative(self, result):
         equity, _, _ = result
@@ -205,7 +205,7 @@ class TestPipelineMACD:
 
     def test_metrics_has_all_keys(self, result):
         _, _, metrics = result
-        assert len(metrics) == 8
+        assert len(metrics) == 9
 
     def test_equity_never_negative(self, result):
         equity, _, _ = result

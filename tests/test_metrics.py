@@ -12,6 +12,7 @@ from risk.metrics import (
     win_rate,
     profit_factor,
     avg_trade_duration,
+    calmar_ratio,
     compute_all,
 )
 
@@ -269,6 +270,28 @@ class TestAvgTradeDuration:
 
 
 # ---------------------------------------------------------------------------
+# calmar_ratio
+# ---------------------------------------------------------------------------
+
+class TestCalmarRatio:
+
+    def test_positive_calmar_for_profitable_equity(self):
+        # Rise then partial fall — has both positive return and drawdown
+        values = [100_000, 120_000, 90_000, 110_000]
+        equity = make_equity(values)
+        assert calmar_ratio(equity) > 0
+
+    def test_zero_calmar_when_no_drawdown(self):
+        # Monotonically rising — max_drawdown is 0
+        equity = make_equity([100_000, 110_000, 120_000])
+        assert calmar_ratio(equity) == pytest.approx(0.0)
+
+    def test_negative_calmar_for_losing_equity(self):
+        equity = make_equity([100_000, 80_000, 70_000])
+        assert calmar_ratio(equity) < 0
+
+
+# ---------------------------------------------------------------------------
 # compute_all
 # ---------------------------------------------------------------------------
 
@@ -287,7 +310,7 @@ class TestComputeAll:
         expected_keys = {
             "total_return", "annualized_return", "sharpe_ratio",
             "sortino_ratio", "max_drawdown", "win_rate",
-            "profit_factor", "avg_trade_duration",
+            "profit_factor", "avg_trade_duration", "calmar_ratio",
         }
         assert expected_keys == set(result.keys())
 

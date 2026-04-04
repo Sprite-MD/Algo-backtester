@@ -127,6 +127,18 @@ def avg_trade_duration(trade_df: pd.DataFrame) -> float:
     return float(np.mean(durations))
 
 
+def calmar_ratio(equity: pd.Series) -> float:
+    """
+    Annualized return divided by the absolute max drawdown.
+    Higher is better. Returns 0.0 if max drawdown is zero.
+    """
+    ann_ret = annualized_return(equity)
+    mdd = max_drawdown(equity)
+    if mdd == 0:
+        return 0.0
+    return float(ann_ret / abs(mdd))
+
+
 def compute_all(equity: pd.Series, trade_df: pd.DataFrame) -> dict:
     """Run all metrics and return results in a single dictionary."""
     return {
@@ -138,4 +150,5 @@ def compute_all(equity: pd.Series, trade_df: pd.DataFrame) -> dict:
         "win_rate":           win_rate(trade_df),
         "profit_factor":      profit_factor(trade_df),
         "avg_trade_duration": avg_trade_duration(trade_df),
+        "calmar_ratio":       calmar_ratio(equity),
     }

@@ -55,8 +55,12 @@ def _drawdown_chart(equity: pd.Series) -> go.Figure:
     return fig
 
 
-def _candlestick_chart(data: pd.DataFrame, trade_df: pd.DataFrame) -> go.Figure:
-    """OHLC candlestick with buy/sell signal markers overlaid."""
+def _candlestick_chart(
+    data: pd.DataFrame,
+    trade_df: pd.DataFrame,
+    config: BacktestConfig,
+) -> go.Figure:
+    """OHLC candlestick with buy/sell signal markers and MA overlay."""
     fig = go.Figure()
 
     fig.add_trace(go.Candlestick(
@@ -69,6 +73,27 @@ def _candlestick_chart(data: pd.DataFrame, trade_df: pd.DataFrame) -> go.Figure:
         increasing_line_color="#26A69A",
         decreasing_line_color="#EF5350",
     ))
+
+    # MA overlay — only for moving_average strategy since MAs are the signal
+    if config.strategy == "moving_average":
+        p = config.moving_average
+        if p.ma_type == "sma":
+            fast_ma = data["close"].rolling(p.fast_window).mean()
+            slow_ma = data["close"].rolling(p.slow_window).mean()
+        else:
+            fast_ma = data["close"].ewm(span=p.fast_window, adjust=False).mean()
+            slow_ma = data["close"].ewm(span=p.slow_window, adjust=False).mean()
+
+        fig.add_trace(go.Scatter(
+            x=data.index, y=fast_ma,
+            name=f"Fast {p.ma_type.upper()}({p.fast_window})",
+            line=dict(color="#FF9800", width=1),
+        ))
+        fig.add_trace(go.Scatter(
+            x=data.index, y=slow_ma,
+            name=f"Slow {p.ma_type.upper()}({p.slow_window})",
+            line=dict(color="#9C27B0", width=1),
+        ))
 
     if not trade_df.empty:
         buys  = trade_df[trade_df["direction"] == "buy"]
@@ -96,36 +121,35 @@ def _candlestick_chart(data: pd.DataFrame, trade_df: pd.DataFrame) -> go.Figure:
         title="Price & Signals",
         xaxis_title="Date",
         yaxis_title="Price ($)",
-        xaxis_rangeslider_visible=False,
+        xaxis_rangeslider_visible=True,
         hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     return fig
 
 
-def _metrics_table(metrics: dict) -> pd.DataFrame:
-    """Format metrics dict into a two-column display DataFrame."""
-    labels = {
-        "total_return":       "Total Return",
-        "annualized_return":  "Annualized Return",
-        "sharpe_ratio":       "Sharpe Ratio",
-        "sortino_ratio":      "Sortino Ratio",
-        "max_drawdown":       "Max Drawdown",
-        "win_rate":           "Win Rate",
-        "profit_factor":      "Profit Factor",
-        "avg_trade_duration": "Avg Trade Duration (days)",
-    }
-    pct_keys = {"total_return", "annualized_return", "max_drawdown", "win_rate"}
+def _render_metric_cards(metrics: dict, bnh_return: float) -> None:
+    """Render performance metrics as st.metric() cards in a grid."""
+    alpha = metrics["total_return"] - bnh_return
 
-    rows = []
-    for key, label in labels.items():
-        val = metrics.get(key, 0.0)
-        if key in pct_keys:
-            formatted = f"{val * 100:.2f}%"
-        else:
-            formatted = f"{val:.2f}"
-        rows.append({"Metric": label, "Value": formatted})
+    row1 = st.columns(4)
+    row1[0].metric("Total Return",      f"{metrics['total_return'] * 100:.2f}%")
+    row1[1].metric("Annualized Return", f"{metrics['annualized_return'] * 100:.2f}%")
+    row1[2].metric("Sharpe Ratio",      f"{metrics['sharpe_ratio']:.2f}")
+    row1[3].metric("Sortino Ratio",     f"{metrics['sortino_ratio']:.2f}")
 
-    return pd.DataFrame(rows)
+    row2 = st.columns(4)
+    row2[0].metric("Max Drawdown",      f"{metrics['max_drawdown'] * 100:.2f}%")
+    row2[1].metric("Win Rate",          f"{metrics['win_rate'] * 100:.2f}%")
+    row2[2].metric("Profit Factor",     f"{metrics['profit_factor']:.2f}")
+    row2[3].metric("Calmar Ratio",      f"{metrics['calmar_ratio']:.2f}")
+
+    row3 = st.columns(4)
+    row3[0].metric("Avg Trade Duration", f"{metrics['avg_trade_duration']:.1f} days")
+    row3[1].metric("Alpha vs B&H",       f"{alpha * 100:.2f}%",
+                   delta=f"{alpha * 100:.2f}%",
+                   delta_color="normal")
+    row3[2].metric("Buy & Hold Return",  f"{bnh_return * 100:.2f}%")
 
 
 # ---------------------------------------------------------------------------
@@ -142,13 +166,12 @@ def run_dashboard(
     st.title("Algorithmic Trading Backtester")
     st.caption(f"{config.ticker} · {config.start_date.strftime('%m/%d/%Y')} → {config.end_date.strftime('%m/%d/%Y')} · {config.strategy.replace('_', ' ').title()}")
 
-    # Row 1 — metrics table
+    # Buy-and-hold return for alpha calculation
+    bnh_return = float((data["close"].iloc[-1] - data["close"].iloc[0]) / data["close"].iloc[0])
+
+    # Row 1 — metric cards
     st.subheader("Performance Summary")
-    st.dataframe(
-        _metrics_table(metrics),
-        width="stretch",
-        hide_index=True,
-    )
+    _render_metric_cards(metrics, bnh_return)
 
     st.markdown("---")
 
@@ -161,10 +184,16 @@ def run_dashboard(
 
     st.markdown("---")
 
-    # Row 3 — candlestick with signals, full width
-    st.plotly_chart(_candlestick_chart(data, trade_df), width="stretch")
+    # Row 3 — candlestick with signals and MA overlay, full width
+    st.plotly_chart(_candlestick_chart(data, trade_df, config), width="stretch")
 
-    # Row 4 — trade log
+    # Row 4 — trade log with download button
     if not trade_df.empty:
         st.subheader("Trade Log")
         st.dataframe(trade_df, width="stretch", hide_index=True)
+        st.download_button(
+            label="Download Trade Log as CSV",
+            data=trade_df.to_csv(index=False),
+            file_name=f"{config.ticker}_{config.strategy}_trades.csv",
+            mime="text/csv",
+        )

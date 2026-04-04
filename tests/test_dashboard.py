@@ -8,7 +8,6 @@ from visualization.dashboard import (
     _equity_chart,
     _drawdown_chart,
     _candlestick_chart,
-    _metrics_table,
 )
 
 
@@ -48,6 +47,7 @@ def make_metrics() -> dict:
         "win_rate":           0.65,
         "profit_factor":      2.1,
         "avg_trade_duration": 22.5,
+        "calmar_ratio":       1.5,
     }
 
 
@@ -116,69 +116,44 @@ class TestDrawdownChart:
 class TestCandlestickChart:
 
     def test_returns_figure(self):
-        fig = _candlestick_chart(make_data(), make_trade_df())
+        fig = _candlestick_chart(make_data(), make_trade_df(), config)
         assert isinstance(fig, go.Figure)
 
     def test_has_candlestick_trace(self):
-        fig = _candlestick_chart(make_data(), make_trade_df())
+        fig = _candlestick_chart(make_data(), make_trade_df(), config)
         types = [type(t).__name__ for t in fig.data]
         assert "Candlestick" in types
 
     def test_buy_marker_trace_present(self):
-        fig = _candlestick_chart(make_data(), make_trade_df())
+        fig = _candlestick_chart(make_data(), make_trade_df(), config)
         names = [t.name for t in fig.data]
         assert "Buy" in names
 
     def test_sell_marker_trace_present(self):
-        fig = _candlestick_chart(make_data(), make_trade_df())
+        fig = _candlestick_chart(make_data(), make_trade_df(), config)
         names = [t.name for t in fig.data]
         assert "Sell" in names
 
     def test_no_signal_traces_for_empty_trade_df(self):
-        fig = _candlestick_chart(make_data(), pd.DataFrame())
+        fig = _candlestick_chart(make_data(), pd.DataFrame(), config)
         names = [t.name for t in fig.data]
         assert "Buy" not in names
         assert "Sell" not in names
 
-    def test_only_candlestick_when_no_trades(self):
-        fig = _candlestick_chart(make_data(), pd.DataFrame())
-        assert len(fig.data) == 1
+    def test_ma_overlay_present_for_moving_average_strategy(self):
+        ma_config = BacktestConfig(strategy="moving_average")
+        fig = _candlestick_chart(make_data(), pd.DataFrame(), ma_config)
+        names = [t.name for t in fig.data]
+        assert any("SMA" in n or "EMA" in n for n in names)
 
+    def test_no_ma_overlay_for_rsi_strategy(self):
+        rsi_config = BacktestConfig(strategy="rsi")
+        fig = _candlestick_chart(make_data(), pd.DataFrame(), rsi_config)
+        names = [t.name for t in fig.data]
+        assert not any("SMA" in n or "EMA" in n for n in names)
 
-# ---------------------------------------------------------------------------
-# Metrics table
-# ---------------------------------------------------------------------------
-
-class TestMetricsTable:
-
-    def test_returns_dataframe(self):
-        df = _metrics_table(make_metrics())
-        assert isinstance(df, pd.DataFrame)
-
-    def test_has_metric_and_value_columns(self):
-        df = _metrics_table(make_metrics())
-        assert "Metric" in df.columns
-        assert "Value" in df.columns
-
-    def test_has_eight_rows(self):
-        df = _metrics_table(make_metrics())
-        assert len(df) == 8
-
-    def test_total_return_formatted_as_percent(self):
-        df = _metrics_table(make_metrics())
-        row = df[df["Metric"] == "Total Return"]["Value"].iloc[0]
-        assert "%" in row
-
-    def test_max_drawdown_formatted_as_percent(self):
-        df = _metrics_table(make_metrics())
-        row = df[df["Metric"] == "Max Drawdown"]["Value"].iloc[0]
-        assert "%" in row
-
-    def test_sharpe_ratio_formatted_as_decimal(self):
-        df = _metrics_table(make_metrics())
-        row = df[df["Metric"] == "Sharpe Ratio"]["Value"].iloc[0]
-        assert "%" not in row
-
-    def test_all_metrics_keys_represented(self):
-        df = _metrics_table(make_metrics())
-        assert len(df) == len(make_metrics())
+    def test_no_ma_overlay_for_macd_strategy(self):
+        macd_config = BacktestConfig(strategy="macd")
+        fig = _candlestick_chart(make_data(), pd.DataFrame(), macd_config)
+        names = [t.name for t in fig.data]
+        assert not any("SMA" in n or "EMA" in n for n in names)

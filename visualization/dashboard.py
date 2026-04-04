@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 
-from config import BacktestConfig
+from config import BacktestConfig  # kept for run_dashboard type hint
 
 
 # ---------------------------------------------------------------------------
@@ -129,41 +129,6 @@ def _metrics_table(metrics: dict) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Sidebar — read-only config display
-# ---------------------------------------------------------------------------
-
-def _render_sidebar(config: BacktestConfig) -> None:
-    st.sidebar.header("Configuration")
-    st.sidebar.markdown(f"**Ticker:** {config.ticker}")
-    st.sidebar.markdown(f"**Start:** {config.start_date}")
-    st.sidebar.markdown(f"**End:** {config.end_date}")
-    st.sidebar.markdown(f"**Strategy:** {config.strategy}")
-    st.sidebar.markdown(f"**Initial Capital:** ${config.initial_capital:,.0f}")
-    st.sidebar.markdown(f"**Commission:** {config.commission * 100:.2f}%")
-    st.sidebar.markdown(f"**Slippage:** {config.slippage * 100:.3f}%")
-    st.sidebar.markdown(f"**Position Size:** {config.position_size * 100:.0f}%")
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Strategy Parameters")
-
-    if config.strategy == "moving_average":
-        p = config.moving_average
-        st.sidebar.markdown(f"**Type:** {p.ma_type.upper()}")
-        st.sidebar.markdown(f"**Fast Window:** {p.fast_window}")
-        st.sidebar.markdown(f"**Slow Window:** {p.slow_window}")
-    elif config.strategy == "rsi":
-        p = config.rsi
-        st.sidebar.markdown(f"**Period:** {p.period}")
-        st.sidebar.markdown(f"**Oversold:** {p.oversold}")
-        st.sidebar.markdown(f"**Overbought:** {p.overbought}")
-    elif config.strategy == "macd":
-        p = config.macd
-        st.sidebar.markdown(f"**Fast Period:** {p.fast_period}")
-        st.sidebar.markdown(f"**Slow Period:** {p.slow_period}")
-        st.sidebar.markdown(f"**Signal Period:** {p.signal_period}")
-
-
-# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -174,16 +139,8 @@ def run_dashboard(
     trade_df: pd.DataFrame,
     metrics:  dict,
 ) -> None:
-    st.set_page_config(
-        page_title="Algo Backtester",
-        page_icon="📈",
-        layout="wide",
-    )
-
-    _render_sidebar(config)
-
     st.title("Algorithmic Trading Backtester")
-    st.caption(f"{config.ticker} · {config.start_date} → {config.end_date} · {config.strategy.replace('_', ' ').title()}")
+    st.caption(f"{config.ticker} · {config.start_date.strftime('%m/%d/%Y')} → {config.end_date.strftime('%m/%d/%Y')} · {config.strategy.replace('_', ' ').title()}")
 
     # Row 1 — metrics table
     st.subheader("Performance Summary")

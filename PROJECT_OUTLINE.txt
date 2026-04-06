@@ -318,40 +318,56 @@ SHOULD CONTAIN (each as a standalone function):
   - avg_trade_duration(trade_df: pd.DataFrame) -> float
       Mean number of bars/days between entry and exit
 
+  - calmar_ratio(equity: pd.Series) -> float
+      annualized_return / abs(max_drawdown)
+
   - compute_all(equity, trade_df) -> dict
       Calls all of the above and returns results in a single dict
+
+
+--------------------------------------------------------------------------------
+streamlit_app.py
+--------------------------------------------------------------------------------
+PURPOSE:
+  Streamlit entry point. Owns the app shell, page config, and all interactive
+  sidebar controls. Builds a BacktestConfig from widget values, runs the
+  backtest, then delegates rendering to dashboard.py.
+
+SHOULD CONTAIN:
+  - st.set_page_config (title, icon, wide layout, sidebar expanded by default)
+  - Sidebar widgets for all user-configurable parameters:
+      ticker (text input), strategy (selectbox), start/end date (date inputs),
+      initial capital (number input), commission/slippage/position size (sliders)
+      and strategy-specific parameter controls that appear conditionally
+  - Config construction from widget values with Pydantic validation
+  - run_backtest() call wrapped in st.spinner
+  - run_dashboard() call to hand off to the rendering layer
 
 
 --------------------------------------------------------------------------------
 visualization/dashboard.py
 --------------------------------------------------------------------------------
 PURPOSE:
-  Render the full results interface as an interactive Streamlit app using
-  Plotly charts. Consumes outputs from the portfolio and metrics modules.
+  Render the full results interface. Consumes outputs from the backtest and
+  displays them using Streamlit and Plotly. No user input handling here —
+  all controls live in streamlit_app.py.
 
 SHOULD CONTAIN:
   - run_dashboard(config, data, equity, trade_df, metrics) — main entry point
 
-  - Four visual components:
-      1. Equity Curve Chart
-           - Portfolio equity over time (line)
-           - Buy-and-hold benchmark overlaid (normalized to same starting capital)
-           - Built with plotly go.Scatter
+  - Metric cards (_render_metric_cards):
+      11 st.metric() cards in a 4-column grid covering: Total Return,
+      Annualized Return, Sharpe, Sortino, Max Drawdown, Win Rate, Profit
+      Factor, Calmar Ratio, Avg Trade Duration, Alpha vs B&H, B&H Return
 
-      2. Drawdown Chart
-           - Underwater equity curve: (equity - rolling_max) / rolling_max
-           - Shaded area below zero to visualize loss periods
+  - Three chart builders (each returns go.Figure):
+      1. Equity Curve — strategy equity vs buy-and-hold benchmark
+      2. Drawdown — underwater equity curve, shaded red below zero
+      3. Candlestick + Signals — OHLC candles with buy/sell markers and
+         optional MA overlay (fast/slow lines shown for moving_average strategy)
+         with rangeslider enabled for date navigation
 
-      3. Candlestick + Signal Markers
-           - OHLC candlestick via plotly go.Candlestick
-           - Buy signals as green triangle-up markers
-           - Sell signals as red triangle-down markers
-
-      4. Metrics Table
-           - Summary of all risk/metrics.py outputs
-           - Rendered via st.dataframe or st.table
-
-  - Streamlit sidebar: allow user to view config parameters (read-only display)
+  - Trade log table + CSV download button at the bottom
 
 
 --------------------------------------------------------------------------------

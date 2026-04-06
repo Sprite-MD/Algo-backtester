@@ -24,8 +24,9 @@ def fetch_data(config: BacktestConfig = CONFIG) -> pd.DataFrame:
         config.ticker,
         start=config.start_date,
         end=config.end_date,
-        auto_adjust=True,   # adjusts for splits and dividends
+        auto_adjust=True,       # adjusts for splits and dividends
         progress=False,
+        multi_level_index=False, # return flat columns instead of MultiIndex
     )
 
     if raw.empty:
@@ -34,10 +35,6 @@ def fetch_data(config: BacktestConfig = CONFIG) -> pd.DataFrame:
             f"between {config.start_date} and {config.end_date}. "
             "Check that the ticker is valid and the date range includes trading days."
         )
-
-    # Flatten MultiIndex columns that yfinance sometimes returns
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
 
     df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
     df.columns = ["open", "high", "low", "close", "volume"]

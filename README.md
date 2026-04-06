@@ -15,7 +15,8 @@ Test buy/sell strategies against historical price data. Simulates realistic trad
 ```
 Algo-backtester/
 ├── config.py                   # Single source of truth for all parameters
-├── main.py                     # Entry point and CLI
+├── main.py                     # Pipeline functions and CLI
+├── streamlit_app.py            # Streamlit entry point with interactive sidebar
 ├── data/
 │   └── fetcher.py              # yfinance data download with local cache
 ├── strategy/
@@ -32,7 +33,7 @@ Algo-backtester/
 ├── visualization/
 │   └── dashboard.py            # Streamlit + Plotly results dashboard
 └── tests/
-    └── test_fetcher.py         # Unit tests
+    └── ...                     # Unit and integration tests
 ```
 
 ## How It Works
@@ -86,17 +87,17 @@ Runs a Moving Average crossover backtest on AAPL from 2020-01-01 to 2024-01-01 w
 python main.py --ticker TSLA --strategy rsi --start 2021-01-01 --end 2023-01-01
 ```
 
-### Launch the dashboard
+### Launch the interactive dashboard
 
 ```bash
-streamlit run visualization/dashboard.py
+streamlit run streamlit_app.py
 ```
 
-Opens an interactive results browser at `http://localhost:8501`.
+Opens an interactive browser at `http://localhost:8501`. Use the sidebar to change the ticker, strategy, date range, capital, and all strategy parameters — the backtest reruns automatically on every change.
 
 ## Configuration
 
-All parameters live in [config.py](config.py). Edit the `BacktestConfig` defaults or pass overrides via CLI.
+All parameters live in [config.py](config.py). They can be changed via the interactive sidebar in the dashboard, via CLI flags, or by editing the defaults directly.
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -143,7 +144,9 @@ The backtester computes the following after each run:
 - **Max Drawdown** — largest peak-to-trough decline in equity
 - **Win Rate** — percentage of trades that were profitable
 - **Profit Factor** — gross profit divided by gross loss
+- **Calmar Ratio** — annualized return divided by max drawdown
 - **Avg Trade Duration** — mean number of days between entry and exit
+- **Alpha vs Buy & Hold** — strategy return minus buy-and-hold return
 
 ## Running Tests
 
